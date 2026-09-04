@@ -75,9 +75,10 @@
   #pad .left{grid-column:1;grid-row:2;}
   #pad .down{grid-column:2;grid-row:2;}
   #pad .right{grid-column:3;grid-row:2;}
-  @media (min-width:800px){ #pad{display:none;} }
+  /* controls adapt to how you play: keyboard mode hides the d-pad, touch mode shows it */
+  body.kbd #pad{display:none;}
+  body.touch #hint{display:none;}
   #hint{font-size:13px;color:#7f74b3;padding-bottom:10px;}
-  @media (max-width:799px){ #hint{display:none;} }
 </style>
 </head>
 <body>
@@ -444,6 +445,21 @@ function showOverlay(title, text, btn, action){
 }
 
 // ---------- input ----------
+// ---------- input mode: keyboard or touchscreen ----------
+// start from device capability, then follow whichever the player actually uses
+function setInputMode(mode){
+  document.body.classList.toggle('touch', mode==='touch');
+  document.body.classList.toggle('kbd', mode==='kbd');
+  if(maze) resize(); // pad appearing/disappearing changes available space
+}
+setInputMode(('ontouchstart' in window) || navigator.maxTouchPoints > 0 ? 'touch' : 'kbd');
+window.addEventListener('keydown', e => {
+  if(['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d'].includes(e.key.toLowerCase())) setInputMode('kbd');
+});
+window.addEventListener('pointerdown', e => {
+  if(e.pointerType === 'touch') setInputMode('touch');
+});
+
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if(k==='arrowup'||k==='w'){ e.preventDefault(); tryMove(0,-1); }
