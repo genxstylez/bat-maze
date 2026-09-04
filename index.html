@@ -63,13 +63,20 @@
   }
   #overlay button:active{transform:translateY(3px);box-shadow:0 1px 0 #a86f1d;}
   #pad{
-    display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,56px);
-    gap:6px;padding:10px 0 18px;
+    position:fixed;
+    right:max(14px, env(safe-area-inset-right));
+    top:55%;
+    transform:translateY(-50%);
+    display:grid;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(2,52px);
+    gap:6px;
+    z-index:10;
+    opacity:0.92;
   }
   #pad button{
     font-family:inherit;font-size:22px;color:var(--text);
-    background:#221a45;border:2px solid #3a2f6e;border-radius:10px;
+    background:rgba(34,26,69,0.85);border:2px solid #3a2f6e;border-radius:10px;
     cursor:pointer;
+    backdrop-filter:blur(2px);
   }
   #pad button:active{background:#3a2f6e;}
   #pad .up{grid-column:2;grid-row:1;}
