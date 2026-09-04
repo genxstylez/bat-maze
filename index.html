@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Bat Maze — 10 Levels</title>
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0e0a1f;
+    --floor:#171130;
+    --wall:#2c2456;
+    --wall-hi:#453a80;
+    --amber:#ffb84d;
+    --bat:#b18cff;
+    --exit:#4dffc3;
+    --text:#e8e2ff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Pixelify Sans",ui-monospace,monospace;
+    display:flex;flex-direction:column;align-items:center;
+    overflow:hidden;touch-action:none;
+    user-select:none;-webkit-user-select:none;
+  }
+  #hud{
+    width:100%;max-width:560px;
+    display:flex;justify-content:space-between;align-items:baseline;
+    padding:14px 18px 8px;
+  }
+  #hud .title{font-size:20px;font-weight:700;letter-spacing:1px;color:var(--amber);}
+  #hud .lvl{font-size:18px;color:var(--exit);}
+  #wrap{position:relative;flex:1;width:100%;display:flex;align-items:center;justify-content:center;padding:4px 10px;}
+  canvas{
+    image-rendering:pixelated;
+    border-radius:10px;
+    box-shadow:0 0 0 3px #221a45, 0 0 40px rgba(77,255,195,.06);
+    max-width:100%;max-height:100%;
+  }
+  #overlay{
+    position:absolute;inset:0;display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:14px;
+    background:rgba(14,10,31,.82);backdrop-filter:blur(3px);
+    text-align:center;padding:20px;
+  }
+  #overlay.show{display:flex;}
+  #overlay h2{font-size:30px;font-weight:700;}
+  #overlay p{font-size:16px;line-height:1.5;max-width:420px;color:#c9c0f2;}
+  #overlay button{
+    font-family:inherit;font-size:18px;font-weight:600;
+    background:var(--amber);color:#2a1a00;border:none;border-radius:8px;
+    padding:12px 28px;cursor:pointer;
+    box-shadow:0 4px 0 #a86f1d;
+  }
+  #overlay button:active{transform:translateY(3px);box-shadow:0 1px 0 #a86f1d;}
+  #pad{
+    display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,56px);
+    gap:6px;padding:10px 0 18px;
+  }
+  #pad button{
+    font-family:inherit;font-size:22px;color:var(--text);
+    background:#221a45;border:2px solid #3a2f6e;border-radius:10px;
+    cursor:pointer;
+  }
+  #pad button:active{background:#3a2f6e;}
+  #pad .up{grid-column:2;grid-row:1;}
+  #pad .left{grid-column:1;grid-row:2;}
+  #pad .down{grid-column:2;grid-row:2;}
+  #pad .right{grid-column:3;grid-row:2;}
+  @media (min-width:800px){ #pad{display:none;} }
+  #hint{font-size:13px;color:#7f74b3;padding-bottom:10px;}
+  @media (max-width:799px){ #hint{display:none;} }
+</style>
+</head>
+<body>
+<div id="hud">
+  <span class="title">BAT MAZE</span>
+  <span class="lvl">Level <span id="lvlNum">1</span> / 10</span>
+</div>
+<div id="wrap">
+  <canvas id="game"></canvas>
+  <div id="overlay">
+    <h2 id="ovTitle">Bat Maze</h2>
+    <p id="ovText">Reach the glowing portal. The bat flies straight through walls — you can't. It gets faster and smarter every level. Move with arrow keys, WASD, or swipe.</p>
+    <button id="ovBtn">Start</button>
+  </div>
+</div>
+<div id="hint">Arrow keys / WASD to move</div>
+<div id="pad">
+  <button class="up" data-d="0,-1">▲</button>
+  <button class="left" data-d="-1,0">◀</button>
+  <button class="down" data-d="0,1">▼</button>
+  <button class="right" data-d="1,0">▶</button>
+</div>
+
+<script>
+(() => {
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const ovTitle = document.getElementById('ovTitle');
+const ovText = document.getElementById('ovText');
+const ovBtn = document.getElementById('ovBtn');
+const lvlNum = document.getElementById('lvlNum');
+
+const TOTAL_LEVELS = 10;
+// grid size (odd numbers) per level
+const SIZES = [9, 9, 11, 11, 13, 13, 15, 15, 17, 19];
+// bat speed in cells/second and homing strength per level
+const BAT_SPEED = [1.6, 1.9, 2.1, 2.3, 2.5, 2.7, 2.9, 3.1, 3.3, 3.6];
+const BAT_HOMING = [0.010, 0.014, 0.018, 0.022, 0.026, 0.030, 0.035, 0.040, 0.046, 0.052];
+const GRACE_MS = 1800;
+
+let level = 1;
+let maze, cols, rows, cell;
+let player, exit, bat;
+let state = 'menu'; // menu | play | caught | win
+let graceUntil = 0;
+let lastT = 0;
+let shake = 0;
+
+// ---------- maze generation (recursive backtracker) ----------
+function genMaze(n){
+  cols = rows = n;
+  // 1 = wall, 0 = floor
+  const g = Array.from({length:n}, () => Array(n).fill(1));
+  const stack = [[1,1]];
+  g[1][1] = 0;
+  const dirs = [[2,0],[-2,0],[0,2],[0,-2]];
+  while(stack.length){
+    const [x,y] = stack[stack.length-1];
+    const opts = dirs
+      .map(([dx,dy]) => [x+dx, y+dy, x+dx/2, y+dy/2])
+      .filter(([nx,ny]) => nx>0 && ny>0 && nx<n-1 && ny<n-1 && g[ny][nx]===1);
+    if(!opts.length){ stack.pop(); continue; }
+    const [nx,ny,wx,wy] = opts[Math.floor(Math.random()*opts.length)];
+    g[wy][wx] = 0; g[ny][nx] = 0;
+    stack.push([nx,ny]);
+  }
+  // punch a few extra openings on higher levels so there are loops (escape routes)
+  const extra = Math.floor(n/4);
+  for(let i=0;i<extra;i++){
+    const x = 1+Math.floor(Math.random()*(n-2));
+    const y = 1+Math.floor(Math.random()*(n-2));
+    if(g[y][x]===1){
+      const open = (g[y-1]?.[x]===0) + (g[y+1]?.[x]===0) + (g[y][x-1]===0) + (g[y][x+1]===0);
+      if(open>=2) g[y][x]=0;
+    }
+  }
+  return g;
+}
+
+// ---------- level setup ----------
+function startLevel(lv){
+  level = lv;
+  lvlNum.textContent = lv;
+  const n = SIZES[lv-1];
+  maze = genMaze(n);
+  player = {x:1, y:1, px:1, py:1}; // grid + smooth pixel pos (in cells)
+  exit = {x:n-2, y:n-2};
+  // bat spawns far from player, random corner-ish spot
+  bat = {
+    x: n-2 + Math.random(), y: 1 + Math.random(),
+    vx: 0, vy: 0,
+    flap: 0
+  };
+  const ang = Math.random()*Math.PI*2;
+  bat.vx = Math.cos(ang); bat.vy = Math.sin(ang);
+  graceUntil = performance.now() + GRACE_MS;
+  resize();
+  state = 'play';
+  overlay.classList.remove('show');
+}
+
+// ---------- rendering ----------
+function resize(){
+  const wrap = document.getElementById('wrap');
+  const avail = Math.min(wrap.clientWidth-20, wrap.clientHeight-20, 560);
+  cell = Math.max(14, Math.floor(avail / cols));
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = cols*cell*dpr;
+  canvas.height = rows*cell*dpr;
+  canvas.style.width = cols*cell+'px';
+  canvas.style.height = rows*cell+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize', () => { if(maze) resize(); });
+
+function css(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function draw(t){
+  ctx.save();
+  if(shake>0){
+    ctx.translate((Math.random()-0.5)*shake, (Math.random()-0.5)*shake);
+    shake *= 0.85; if(shake<0.5) shake=0;
+  }
+  // floor + walls
+  ctx.fillStyle = css('--floor');
+  ctx.fillRect(0,0,cols*cell,rows*cell);
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      if(maze[y][x]===1){
+        ctx.fillStyle = css('--wall');
+        ctx.fillRect(x*cell, y*cell, cell, cell);
+        ctx.fillStyle = css('--wall-hi');
+        ctx.fillRect(x*cell, y*cell, cell, Math.max(2,cell*0.14));
+      }
+    }
+  }
+  // exit portal — pulsing ring
+  const ex = (exit.x+0.5)*cell, ey = (exit.y+0.5)*cell;
+  const pulse = 0.75 + 0.25*Math.sin(t/300);
+  const grad = ctx.createRadialGradient(ex,ey,1, ex,ey,cell*0.9);
+  grad.addColorStop(0,'rgba(77,255,195,0.55)');
+  grad.addColorStop(1,'rgba(77,255,195,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(ex-cell, ey-cell, cell*2, cell*2);
+  ctx.strokeStyle = css('--exit');
+  ctx.lineWidth = Math.max(2, cell*0.09);
+  ctx.beginPath();
+  ctx.arc(ex, ey, cell*0.32*pulse, 0, Math.PI*2);
+  ctx.stroke();
+
+  // player — amber square with glow
+  const px = (player.px+0.5)*cell, py = (player.py+0.5)*cell;
+  const pg = ctx.createRadialGradient(px,py,1, px,py,cell*1.1);
+  pg.addColorStop(0,'rgba(255,184,77,0.35)');
+  pg.addColorStop(1,'rgba(255,184,77,0)');
+  ctx.fillStyle = pg;
+  ctx.fillRect(px-cell*1.1, py-cell*1.1, cell*2.2, cell*2.2);
+  const s = cell*0.56;
+  ctx.fillStyle = css('--amber');
+  ctx.fillRect(px-s/2, py-s/2, s, s);
+  ctx.fillStyle = '#3a2405';
+  const eyeS = Math.max(2, s*0.16);
+  ctx.fillRect(px-s*0.22, py-s*0.18, eyeS, eyeS);
+  ctx.fillRect(px+s*0.06, py-s*0.18, eyeS, eyeS);
+
+  // bat — flapping wings, flashes during grace
+  const inGrace = t < graceUntil;
+  const bx = (bat.x+0.5)*cell, by = (bat.y+0.5)*cell;
+  const flap = Math.sin(t/90);
+  if(!inGrace || Math.floor(t/150)%2===0){
+    // shadow on floor
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(bx, by+cell*0.35, cell*0.28, cell*0.10, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = css('--bat');
+    // body
+    ctx.beginPath();
+    ctx.ellipse(bx, by, cell*0.16, cell*0.20, 0, 0, Math.PI*2);
+    ctx.fill();
+    // wings
+    const wy = flap * cell*0.18;
+    ctx.beginPath();
+    ctx.moveTo(bx-cell*0.10, by);
+    ctx.quadraticCurveTo(bx-cell*0.45, by-cell*0.30+wy, bx-cell*0.52, by+wy*0.5);
+    ctx.quadraticCurveTo(bx-cell*0.30, by+cell*0.10, bx-cell*0.10, by+cell*0.06);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(bx+cell*0.10, by);
+    ctx.quadraticCurveTo(bx+cell*0.45, by-cell*0.30+wy, bx+cell*0.52, by+wy*0.5);
+    ctx.quadraticCurveTo(bx+cell*0.30, by+cell*0.10, bx+cell*0.10, by+cell*0.06);
+    ctx.fill();
+    // eyes
+    ctx.fillStyle = '#ff5d5d';
+    const be = Math.max(1.5, cell*0.05);
+    ctx.fillRect(bx-cell*0.09, by-cell*0.08, be, be);
+    ctx.fillRect(bx+cell*0.04, by-cell*0.08, be, be);
+  }
+  ctx.restore();
+}
+
+// ---------- game logic ----------
+function tryMove(dx,dy){
+  if(state!=='play') return;
+  const nx = player.x+dx, ny = player.y+dy;
+  if(nx<0||ny<0||nx>=cols||ny>=rows) return;
+  if(maze[ny][nx]===1) return;
+  player.x=nx; player.y=ny;
+}
+
+function update(t, dt){
+  if(state!=='play') return;
+  // smooth player slide
+  player.px += (player.x-player.px)*Math.min(1, dt*18);
+  player.py += (player.y-player.py)*Math.min(1, dt*18);
+
+  // bat: random wander + homing, flies over walls, bounces off outer edge
+  const home = BAT_HOMING[level-1];
+  const spd = BAT_SPEED[level-1];
+  const toX = player.px - bat.x, toY = player.py - bat.y;
+  const d = Math.hypot(toX,toY) || 1;
+  bat.vx += (Math.random()-0.5)*0.25 + (toX/d)*home*60*dt*10;
+  bat.vy += (Math.random()-0.5)*0.25 + (toY/d)*home*60*dt*10;
+  const v = Math.hypot(bat.vx,bat.vy) || 1;
+  bat.vx/=v; bat.vy/=v;
+  const moving = t >= graceUntil;
+  if(moving){
+    bat.x += bat.vx*spd*dt;
+    bat.y += bat.vy*spd*dt;
+  }
+  if(bat.x < 0.6){ bat.x=0.6; bat.vx = Math.abs(bat.vx); }
+  if(bat.y < 0.6){ bat.y=0.6; bat.vy = Math.abs(bat.vy); }
+  if(bat.x > cols-1.6){ bat.x=cols-1.6; bat.vx = -Math.abs(bat.vx); }
+  if(bat.y > rows-1.6){ bat.y=rows-1.6; bat.vy = -Math.abs(bat.vy); }
+
+  // caught?
+  if(moving && Math.hypot(bat.x-player.px, bat.y-player.py) < 0.42){
+    state='caught';
+    shake = 14;
+    setTimeout(() => showOverlay(
+      'Caught!',
+      'The bat got you on level '+level+'. Try this level again.',
+      'Retry level '+level,
+      () => startLevel(level)
+    ), 350);
+  }
+  // exit?
+  if(player.x===exit.x && player.y===exit.y){
+    if(level===TOTAL_LEVELS){
+      state='win';
+      showOverlay('You escaped!','All 10 levels cleared. The bat goes hungry tonight.','Play again', () => startLevel(1));
+    }else{
+      state='between';
+      showOverlay('Level '+level+' clear!','The maze grows and the bat gets faster.','Level '+(level+1), () => startLevel(level+1));
+    }
+  }
+}
+
+function showOverlay(title, text, btn, action){
+  ovTitle.textContent = title;
+  ovText.textContent = text;
+  ovBtn.textContent = btn;
+  ovBtn.onclick = action;
+  overlay.classList.add('show');
+}
+
+// ---------- input ----------
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if(k==='arrowup'||k==='w'){ e.preventDefault(); tryMove(0,-1); }
+  else if(k==='arrowdown'||k==='s'){ e.preventDefault(); tryMove(0,1); }
+  else if(k==='arrowleft'||k==='a'){ e.preventDefault(); tryMove(-1,0); }
+  else if(k==='arrowright'||k==='d'){ e.preventDefault(); tryMove(1,0); }
+  else if(k==='enter' && overlay.classList.contains('show')){ ovBtn.click(); }
+});
+
+// d-pad with hold-to-repeat
+let holdTimer=null, holdInt=null;
+document.querySelectorAll('#pad button').forEach(b=>{
+  const [dx,dy] = b.dataset.d.split(',').map(Number);
+  const start = e => {
+    e.preventDefault();
+    tryMove(dx,dy);
+    holdTimer = setTimeout(()=>{ holdInt = setInterval(()=>tryMove(dx,dy), 130); }, 280);
+  };
+  const stop = () => { clearTimeout(holdTimer); clearInterval(holdInt); };
+  b.addEventListener('pointerdown', start);
+  b.addEventListener('pointerup', stop);
+  b.addEventListener('pointerleave', stop);
+  b.addEventListener('pointercancel', stop);
+});
+
+// swipe on canvas
+let touchStart=null;
+canvas.addEventListener('pointerdown', e => { touchStart=[e.clientX,e.clientY]; });
+canvas.addEventListener('pointerup', e => {
+  if(!touchStart) return;
+  const dx = e.clientX-touchStart[0], dy = e.clientY-touchStart[1];
+  touchStart=null;
+  if(Math.hypot(dx,dy) < 24) return;
+  if(Math.abs(dx) > Math.abs(dy)) tryMove(Math.sign(dx),0);
+  else tryMove(0,Math.sign(dy));
+});
+
+// ---------- loop ----------
+function loop(t){
+  const dt = Math.min(0.05, (t-lastT)/1000);
+  lastT = t;
+  if(maze){ update(t, dt); draw(t); }
+  requestAnimationFrame(loop);
+}
+
+// menu
+ovBtn.onclick = () => startLevel(1);
+overlay.classList.add('show');
+// pre-generate level 1 so the maze shows behind the menu
+maze = genMaze(SIZES[0]);
+cols = rows = SIZES[0];
+player = {x:1,y:1,px:1,py:1};
+exit = {x:cols-2,y:rows-2};
+bat = {x:cols-2,y:1,vx:1,vy:0.4,flap:0};
+graceUntil = Infinity;
+resize();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
