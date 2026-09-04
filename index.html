@@ -116,7 +116,7 @@ const GRACE_MS = 1800;
 
 let level = 1;
 let maze, cols, rows, cell;
-let player, exit, bat;
+let player, exit, bats;
 let state = 'menu'; // menu | play | caught | win
 let graceUntil = 0;
 let lastT = 0;
@@ -161,14 +161,20 @@ function startLevel(lv){
   maze = genMaze(n);
   player = {x:1, y:1, px:1, py:1}; // grid + smooth pixel pos (in cells)
   exit = {x:n-2, y:n-2};
-  // bat spawns far from player, random corner-ish spot
-  bat = {
-    x: n-2 + Math.random(), y: 1 + Math.random(),
-    vx: 0, vy: 0,
-    flap: 0
-  };
-  const ang = Math.random()*Math.PI*2;
-  bat.vx = Math.cos(ang); bat.vy = Math.sin(ang);
+  // bats spawn far from player: 1 bat, 2 from level 3, 3 from level 6, 4 from level 9
+  const nBats = lv>=9 ? 4 : lv>=6 ? 3 : lv>=3 ? 2 : 1;
+  const mid = Math.floor(n/2);
+  const spawns = [[n-2,1],[1,n-2],[n-2,mid],[mid,1]];
+  bats = [];
+  for(let i=0;i<nBats;i++){
+    const [sx,sy] = spawns[i%spawns.length];
+    const ang = Math.random()*Math.PI*2;
+    bats.push({
+      x: sx + Math.random()*0.5, y: sy + Math.random()*0.5,
+      vx: Math.cos(ang), vy: Math.sin(ang),
+      flap: 0, mode: 'wander', modeUntil: 0
+    });
+  }
   graceUntil = performance.now() + GRACE_MS;
   resize();
   state = 'play';
@@ -239,10 +245,11 @@ function draw(t){
   ctx.fillRect(px-s*0.22, py-s*0.18, eyeS, eyeS);
   ctx.fillRect(px+s*0.06, py-s*0.18, eyeS, eyeS);
 
-  // bat — flapping wings, flashes during grace
+  // bats — flapping wings, flash during grace
   const inGrace = t < graceUntil;
-  const bx = (bat.x+0.5)*cell, by = (bat.y+0.5)*cell;
   const flap = Math.sin(t/90);
+  for(const bat of bats){
+  const bx = (bat.x+0.5)*cell, by = (bat.y+0.5)*cell;
   if(!inGrace || Math.floor(t/150)%2===0){
     // shadow on floor
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -272,6 +279,7 @@ function draw(t){
     ctx.fillRect(bx-cell*0.09, by-cell*0.08, be, be);
     ctx.fillRect(bx+cell*0.04, by-cell*0.08, be, be);
   }
+  }
   ctx.restore();
 }
 
@@ -290,45 +298,47 @@ function update(t, dt){
   player.px += (player.x-player.px)*Math.min(1, dt*18);
   player.py += (player.y-player.py)*Math.min(1, dt*18);
 
-  // bat mood: mostly wanders off on its own, only sometimes hunts
-  if(t > (bat.modeUntil || 0)){
-    bat.mode = Math.random() < 0.6 ? 'wander' : 'hunt';
-    bat.modeUntil = t + 1500 + Math.random()*3000;
-    if(bat.mode === 'wander'){
-      const a = Math.random()*Math.PI*2;
-      bat.vx = Math.cos(a); bat.vy = Math.sin(a);
-    }
-  }
-  // bat: random wander + homing, flies over walls, bounces off outer edge
-  // while wandering it drifts slightly AWAY from the player
-  const home = bat.mode === 'hunt' ? BAT_HOMING[level-1] : -BAT_HOMING[level-1]*0.4;
   const spd = BAT_SPEED[level-1];
-  const toX = player.px - bat.x, toY = player.py - bat.y;
-  const d = Math.hypot(toX,toY) || 1;
-  bat.vx += (Math.random()-0.5)*0.25 + (toX/d)*home*60*dt*10;
-  bat.vy += (Math.random()-0.5)*0.25 + (toY/d)*home*60*dt*10;
-  const v = Math.hypot(bat.vx,bat.vy) || 1;
-  bat.vx/=v; bat.vy/=v;
   const moving = t >= graceUntil;
-  if(moving){
-    bat.x += bat.vx*spd*dt;
-    bat.y += bat.vy*spd*dt;
-  }
-  if(bat.x < 0.6){ bat.x=0.6; bat.vx = Math.abs(bat.vx); }
-  if(bat.y < 0.6){ bat.y=0.6; bat.vy = Math.abs(bat.vy); }
-  if(bat.x > cols-1.6){ bat.x=cols-1.6; bat.vx = -Math.abs(bat.vx); }
-  if(bat.y > rows-1.6){ bat.y=rows-1.6; bat.vy = -Math.abs(bat.vy); }
+  for(const bat of bats){
+    // bat mood: mostly wanders off on its own, only sometimes hunts
+    if(t > (bat.modeUntil || 0)){
+      bat.mode = Math.random() < 0.6 ? 'wander' : 'hunt';
+      bat.modeUntil = t + 1500 + Math.random()*3000;
+      if(bat.mode === 'wander'){
+        const a = Math.random()*Math.PI*2;
+        bat.vx = Math.cos(a); bat.vy = Math.sin(a);
+      }
+    }
+    // random wander + homing, flies over walls, bounces off outer edge
+    // while wandering it drifts slightly AWAY from the player
+    const home = bat.mode === 'hunt' ? BAT_HOMING[level-1] : -BAT_HOMING[level-1]*0.4;
+    const toX = player.px - bat.x, toY = player.py - bat.y;
+    const d = Math.hypot(toX,toY) || 1;
+    bat.vx += (Math.random()-0.5)*0.25 + (toX/d)*home*60*dt*10;
+    bat.vy += (Math.random()-0.5)*0.25 + (toY/d)*home*60*dt*10;
+    const v = Math.hypot(bat.vx,bat.vy) || 1;
+    bat.vx/=v; bat.vy/=v;
+    if(moving){
+      bat.x += bat.vx*spd*dt;
+      bat.y += bat.vy*spd*dt;
+    }
+    if(bat.x < 0.6){ bat.x=0.6; bat.vx = Math.abs(bat.vx); }
+    if(bat.y < 0.6){ bat.y=0.6; bat.vy = Math.abs(bat.vy); }
+    if(bat.x > cols-1.6){ bat.x=cols-1.6; bat.vx = -Math.abs(bat.vx); }
+    if(bat.y > rows-1.6){ bat.y=rows-1.6; bat.vy = -Math.abs(bat.vy); }
 
-  // caught?
-  if(moving && Math.hypot(bat.x-player.px, bat.y-player.py) < 0.42){
-    state='caught';
-    shake = 14;
-    setTimeout(() => showOverlay(
-      'Caught!',
-      'The bat got you on level '+level+'. Try this level again.',
-      'Retry level '+level,
-      () => startLevel(level)
-    ), 350);
+    // caught?
+    if(moving && state==='play' && Math.hypot(bat.x-player.px, bat.y-player.py) < 0.42){
+      state='caught';
+      shake = 14;
+      setTimeout(() => showOverlay(
+        'Caught!',
+        'A bat got you on level '+level+'. Try this level again.',
+        'Retry level '+level,
+        () => startLevel(level)
+      ), 350);
+    }
   }
   // exit?
   if(player.x===exit.x && player.y===exit.y){
@@ -404,7 +414,7 @@ maze = genMaze(SIZES[0]);
 cols = rows = SIZES[0];
 player = {x:1,y:1,px:1,py:1};
 exit = {x:cols-2,y:rows-2};
-bat = {x:cols-2,y:1,vx:1,vy:0.4,flap:0};
+bats = [{x:cols-2,y:1,vx:1,vy:0.4,flap:0,mode:'wander',modeUntil:0}];
 graceUntil = Infinity;
 resize();
 requestAnimationFrame(loop);
